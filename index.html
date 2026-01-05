@@ -85,6 +85,11 @@
 				<input id="ev-close" type="time" />
 			</div>
 			<label><input id="ev-has-admins" type="checkbox" /> Will you have Event Admins</label>
+
+			<!-- NEW: Members field -->
+			<label>Members at the Event (one name per line)</label>
+			<textarea id="ev-members" rows="4" placeholder="Ava&#10;Liam&#10;Noah"></textarea>
+
 			<div class="row">
 				<button id="create-event" class="btn primary">Create Event</button>
 			</div>
@@ -113,12 +118,17 @@
 		<div id="view-ticket-maker" class="view hidden">
 			<button class="back" data-back>Back</button>
 			<h2>Ticket Maker</h2>
+
+			<!-- NEW: person select -->
+			<label>Select person</label>
+			<select id="ticket-person-select"></select>
+
 			<div id="ticket-preview" class="ticket">
 				<div id="ticket-content">
 					<h3 id="tk-name">Event Name</h3>
 					<p id="tk-theme"></p>
 					<p id="tk-datetime"></p>
-					<img id="tk-qr" alt="QR" />
+					<img id="tk-qr" alt="Ticket preview" />
 				</div>
 			</div>
 			<div class="row">
@@ -144,6 +154,11 @@
 			<h2>Admin Panel (Owner)</h2>
 			<p class="muted">Owner-only controls here.</p>
 		</div>
+	</div>
+
+	<!-- overlay for scanner feedback (big acceptance / rejection) -->
+	<div id="scan-overlay" class="hidden">
+		<div id="overlay-box" class="overlay"></div>
 	</div>
 
 <script>
@@ -250,7 +265,7 @@ qs('#btn-admin-panel').addEventListener('click', ()=> {
 	if(session && session.id === OWNER_MASTER){ show('view-admin'); } else alert('Owner only');
 });
 
-// New event create
+// New event: parse members input before saving
 qs('#create-event').addEventListener('click', ()=>{
 	const name = qs('#ev-name').value.trim();
 	const date = qs('#ev-date').value;
@@ -258,8 +273,10 @@ qs('#create-event').addEventListener('click', ()=>{
 	const open = qs('#ev-open').value;
 	const close = qs('#ev-close').value;
 	const admins = qs('#ev-has-admins').checked;
+	const membersRaw = qs('#ev-members').value || '';
+	const members = membersRaw.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
 	if(!name || !date){ alert('Please fill name and date'); return; }
-	const ev = { id: 'EV-'+Date.now(), name, date, theme, open, close, admins };
+	const ev = { id: 'EV-'+Date.now(), name, date, theme, open, close, admins, members };
 	const evs = DB.events; evs.push(ev); DB.events = evs;
 	show('view-dashboard'); renderEvents();
 });
@@ -300,6 +317,10 @@ function openEvent(id){
 // Ticket maker
 let lastTicketQR = null;
 let lastTicketImage = null;
+
+// maintain current ticket list for ticket-maker
+let lastTicketList = []; // array of tickets created for current event
+let currentTicketIndex = 0;
 
 function code128Patterns(){
 	// Code128 module patterns: each entry is array of 6 widths (bar/space alternating), values from standard table
@@ -366,15 +387,17 @@ function encodeCode128B(str){
 }
 
 async function openTicketMaker(ev){
+	// set header text
 	qs('#tk-name').innerText = ev.name;
 	qs('#tk-theme').innerText = 'Theme: '+(ev.theme||'-');
 	qs('#tk-datetime').innerText = ev.date + ' ' + (ev.open||'');
 
-	// create ticket code
-	const code = 'TICKET-'+Math.random().toString(36).slice(2,10);
-	lastTicketQR = code;
+	// create ticket per member (if none, create single untitled ticket)
+	lastTicketList = [];
+	currentTicketIndex = 0;
 
-	// generate QR image for visual as well (optional)
+	const members = (ev.members && ev.members.length) ? ev.members : [null];
+
 	function loadImg(src){
 		return new Promise((res, rej)=>{
 			const i = new Image();
@@ -384,208 +407,147 @@ async function openTicketMaker(ev){
 			i.src = src;
 		});
 	}
-	const qrUrl = 'https://chart.googleapis.com/chart?cht=qr&chs=240x240&chl='+encodeURIComponent(code);
-	let qrImg = null;
-	try{ qrImg = await loadImg(qrUrl); }catch(e){ qrImg = null; }
 
-	// compose canvas (larger canvas to hold clear barcode)
-	const W = 1000, H = 420;
-	const c = document.createElement('canvas'); c.width = W; c.height = H;
-	const ctx2 = c.getContext('2d');
+	for(let i=0;i<members.length;i++){
+		const person = members[i] || '';
+		const code = 'TICKET-'+ev.id+'-'+i+'-'+Math.random().toString(36).slice(2,8);
+		// generate small QR optional (kept as visual), but we always embed Code128 in the final image
+		let qrImg = null;
+		try{
+			const qrUrl = 'https://chart.googleapis.com/chart?cht=qr&chs=240x240&chl='+encodeURIComponent(code);
+			qrImg = await loadImg(qrUrl);
+		}catch(e){ qrImg = null; }
 
-	// background
-	ctx2.fillStyle = '#071019';
-	ctx2.fillRect(0,0,W,H);
-	// header stripe
-	const grad = ctx2.createLinearGradient(0,0,W,0);
-	grad.addColorStop(0,'rgba(87,183,255,0.06)');
-	grad.addColorStop(1,'rgba(123,97,255,0.04)');
-	ctx2.fillStyle = grad;
-	ctx2.fillRect(0,0,W,88);
+		// Compose ticket image canvas (reuse the code128 renderer)
+		const W = 1000, H = 420;
+		const c = document.createElement('canvas'); c.width = W; c.height = H;
+		const ctx2 = c.getContext('2d');
+		// background & header
+		ctx2.fillStyle = '#071019';
+		ctx2.fillRect(0,0,W,H);
+		const grad = ctx2.createLinearGradient(0,0,W,0);
+		grad.addColorStop(0,'rgba(87,183,255,0.06)'); grad.addColorStop(1,'rgba(123,97,255,0.04)');
+		ctx2.fillStyle = grad;
+		ctx2.fillRect(0,0,W,88);
 
-	// Event name
-	ctx2.fillStyle = '#eaf6ff';
-	ctx2.font = '32px sans-serif';
-	ctx2.fillText(ev.name, 28, 64);
+		// Person name on ticket (prominent)
+		ctx2.fillStyle = '#eaf6ff';
+		ctx2.font = '26px sans-serif';
+		const displayName = person || 'Guest';
+		ctx2.fillText(displayName, 28, 64);
 
-	// theme / date / time
-	ctx2.fillStyle = '#cfeeff';
-	ctx2.font = '18px sans-serif';
-	ctx2.fillText('Theme: ' + (ev.theme || '-'), 28, 120);
-	ctx2.fillText('Date: ' + ev.date, 28, 150);
-	ctx2.fillText('Time: ' + (ev.open || '-') + ' — ' + (ev.close || '-'), 28, 180);
+		// Event details
+		ctx2.fillStyle = '#cfeeff';
+		ctx2.font = '16px sans-serif';
+		ctx2.fillText(ev.name, 28, 100);
+		ctx2.fillText('Theme: ' + (ev.theme || '-'), 28, 130);
+		ctx2.fillText('Date: ' + ev.date, 28, 160);
+		ctx2.fillText('Time: ' + (ev.open || '-') + ' — ' + (ev.close || '-'), 28, 190);
 
-	// draw QR if available (small)
-	if(qrImg){
-		const qrSize = 200;
-		ctx2.fillStyle = '#ffffff';
-		ctx2.fillRect(W - qrSize - 28, 28, qrSize, qrSize);
-		ctx2.drawImage(qrImg, W - qrSize - 28 + 8, 28 + 8, qrSize - 16, qrSize - 16);
-	}
+		// small QR visual if available
+		if(qrImg){
+			const qrSize = 160;
+			ctx2.fillStyle = '#ffffff';
+			ctx2.fillRect(W - qrSize - 28, 28, qrSize, qrSize);
+			ctx2.drawImage(qrImg, W - qrSize - 28 + 8, 28 + 8, qrSize - 16, qrSize - 16);
+		}
 
-	// draw real Code128 barcode (bigger, center-right)
-	const barcodeX = 28;
-	const barcodeY = 210;
-	const barcodeH = 140;
-	try{
-		const modules = encodeCode128B(code);
-		// determine module pixel width so barcode fits nicely
-		const quietZone = 20; // px
-		const totalModules = modules.reduce((s,n)=>s+n,0);
-		const availableWidth = W - 56; // padding both sides
-		const modulePx = Math.floor((availableWidth - quietZone*2) / totalModules);
-		const mpx = Math.max(1, modulePx); // at least 1 px
-		let x = barcodeX + quietZone;
-		// white background for barcode area
-		ctx2.fillStyle = '#fff';
-		const bw = totalModules * mpx + quietZone*2;
-		ctx2.fillRect(barcodeX, barcodeY - 8, bw, barcodeH + 16);
-		// draw bars: pattern alternates bar/space starting with bar
-		let drawBar = true;
-		for(let w of modules){
-			const wPx = w * mpx;
-			if(drawBar){
-				ctx2.fillStyle = '#000';
-				ctx2.fillRect(x, barcodeY, wPx, barcodeH);
+		// draw Code128 barcode
+		try{
+			const modules = encodeCode128B(code);
+			const quietZone = 20;
+			const totalModules = modules.reduce((s,n)=>s+n,0);
+			const availableWidth = W - 56;
+			const modulePx = Math.floor((availableWidth - quietZone*2) / totalModules);
+			const mpx = Math.max(1, modulePx);
+			let x = 28 + quietZone;
+			// barcode white background
+			ctx2.fillStyle = '#fff';
+			const bw = totalModules * mpx + quietZone*2;
+			const barcodeY = 220;
+			const barcodeH = 150;
+			ctx2.fillRect(28, barcodeY - 8, bw, barcodeH + 16);
+			let drawBar = true;
+			for(let w of modules){
+				const wPx = w * mpx;
+				if(drawBar){
+					ctx2.fillStyle = '#000';
+					ctx2.fillRect(x, barcodeY, wPx, barcodeH);
+				}
+				x += wPx;
+				drawBar = !drawBar;
 			}
-			x += wPx;
-			drawBar = !drawBar;
+			// code text
+			ctx2.fillStyle = '#00222a';
+			ctx2.font = '18px monospace';
+			ctx2.fillText(code, 28 + 10, barcodeY + barcodeH + 30);
+		}catch(e){
+			// fallback simple visual (shouldn't happen)
+			ctx2.fillStyle = '#bfe8ff';
+			ctx2.font = '14px monospace';
+			ctx2.fillText(code, 28, 280);
 		}
-		// human-readable code text below barcode
-		ctx2.fillStyle = '#00222a';
-		ctx2.font = '18px monospace';
-		ctx2.fillText(code, barcodeX + 10, barcodeY + barcodeH + 30);
-	} catch(e){
-		// fallback visual if encoding fails
-		const barX = 28, barY = 220, barH = 120;
-		const seed = Array.from(code).map(ch=>ch.charCodeAt(0));
-		for(let i=0;i<seed.length;i++){
-			const w = 6 + (seed[i] % 10);
-			const x = barX + i * 12;
-			const shade = 30 + (seed[i] % 120);
-			ctx2.fillStyle = `rgb(${shade},${shade},${shade})`;
-			ctx2.fillRect(x, barY, w, barH);
-		}
-		ctx2.fillStyle = '#bfe8ff';
-		ctx2.font = '14px monospace';
-		ctx2.fillText(code, barX, barY + barH + 22);
+
+		const dataUrl = c.toDataURL('image/png');
+		// create ticket record
+		const ticketRecord = { id: 'TK-'+Date.now()+'-'+i, code, eventId: ev.id, created: Date.now(), img: dataUrl, name: displayName, scanned: false };
+		const tickets = DB.tickets; tickets.push(ticketRecord); DB.tickets = tickets;
+		lastTicketList.push(ticketRecord);
 	}
 
-	// finalize data URL
-	const dataUrl = c.toDataURL('image/png');
-	lastTicketImage = dataUrl;
-
-	// show generated image in ticket preview
-	qs('#tk-qr').src = dataUrl;
-
-	// save ticket record (store image data)
-	const t = { id: 'TK-'+Date.now(), code, eventId: ev.id, created: Date.now(), img: dataUrl };
-	const tickets = DB.tickets; tickets.push(t); DB.tickets = tickets;
+	// populate person select
+	const sel = qs('#ticket-person-select');
+	sel.innerHTML = '';
+	lastTicketList.forEach((t, idx)=>{
+		const opt = document.createElement('option');
+		opt.value = idx;
+		opt.textContent = t.name + ' — ' + t.code;
+		sel.appendChild(opt);
+	});
+	currentTicketIndex = 0;
+	if(lastTicketList.length) showTicketIndex(0);
+	sel.onchange = ()=> {
+		currentTicketIndex = Number(sel.value);
+		showTicketIndex(currentTicketIndex);
+	};
 }
 
-// Download ticket view as PNG
+// helper to show ticket preview by index
+function showTicketIndex(i){
+	const t = lastTicketList[i];
+	if(!t) return;
+	qs('#tk-qr').src = t.img;
+	qs('#tk-name').innerText = t.name;
+	qs('#tk-theme').innerText = t.eventId ? ('Ticket ID: '+t.code) : '';
+}
+
+// Download ticket view as PNG (current ticket)
 qs('#download-ticket').addEventListener('click', async ()=>{
-	// If we have generated image, download it directly
-	const data = lastTicketImage || qs('#tk-qr').src;
+	const t = lastTicketList[currentTicketIndex];
+	const data = (t && t.img) ? t.img : (lastTicketImage || qs('#tk-qr').src);
 	if(!data){ alert('No ticket to download'); return; }
 	const a = document.createElement('a');
 	a.href = data;
-	a.download = 'Barcode.png';
+	a.download = (t && t.name ? t.name.replace(/\s+/g,'_') : 'Barcode') + '.png';
 	document.body.appendChild(a);
 	a.click();
 	a.remove();
 });
 
-// Scanner logic
-let streamRef = null;
-let scanningMode = null;
-const video = qs('#video');
-const canvas = qs('#scan-canvas');
-const ctx = canvas.getContext('2d');
-
-qs('#btn-scan-keycard').addEventListener('click', ()=> startScanner('keycard'));
-
-qs('#exit-scanner').addEventListener('click', ()=> stopScanner());
-
-async function startScanner(mode){
-	scanningMode = mode; show('view-scanner');
-	qs('#scanner-title').innerText = mode==='keycard' ? 'Scan Keycard' : 'Ticket Scanner';
-	try{
-		const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-		streamRef = stream;
-		video.srcObject = stream;
-		await video.play();
-		canvas.width = video.videoWidth || 640;
-		canvas.height = video.videoHeight || 480;
-		qs('#scan-feedback').innerText = 'Scanning...';
-		if(mode==='keycard') scanForEK();
-		else scanForTicket();
-	}catch(e){ alert('Camera error: '+e.message); show('view-menu'); }
-}
-function stopScanner(){
-	if(streamRef){ streamRef.getTracks().forEach(t=>t.stop()); streamRef = null; }
-	video.pause(); video.srcObject = null;
-	show('view-menu');
+// overlay helper (big 3/4 screen popup)
+function showOverlay(kind, text){
+	const overlay = document.getElementById('scan-overlay');
+	const box = document.getElementById('overlay-box');
+	box.className = 'overlay '+(kind === 'ok' ? 'ok' : 'fail');
+	box.innerText = text;
+	overlay.classList.remove('hidden');
+	// show for 2 seconds
+	setTimeout(()=> overlay.classList.add('hidden'), 2000);
 }
 
-// EK reference image embedded (small sample). In practice replace with your EK.png.
-const EK_DATA_URL = (()=>{
-	// 64x64 simple marker (generated) as data URL
-	const c = document.createElement('canvas'); c.width=64; c.height=64;
-	const cx = c.getContext('2d');
-	cx.fillStyle='#222'; cx.fillRect(0,0,64,64);
-	cx.fillStyle='#0af'; cx.fillRect(8,8,48,48);
-	cx.fillStyle='#fff'; cx.fillRect(20,20,24,24);
-	return c.toDataURL();
-})();
-
-let ekImage = new Image();
-ekImage.src = EK_DATA_URL;
-
-// Simple template-match: downsample and compute correlation on small grid
-async function scanForEK(){
-	const threshold = 0.15; // lower is stricter
-	const sampleW = 32, sampleH = 32;
-	// prepare ref
-	const refC = document.createElement('canvas'); refC.width=sampleW; refC.height=sampleH;
-	const rctx = refC.getContext('2d'); rctx.drawImage(ekImage,0,0,sampleW,sampleH);
-	const refData = rctx.getImageData(0,0,sampleW,sampleH).data;
-	const refGray = new Float32Array(sampleW*sampleH);
-	for(let i=0;i<sampleW*sampleH;i++) refGray[i]=(refData[i*4]+refData[i*4+1]+refData[i*4+2])/3/255;
-	let detected=false;
-	async function frame(){
-		if(!streamRef) return;
-		ctx.drawImage(video,0,0,canvas.width,canvas.height);
-		// sample a few random patches to speed up
-		for(let s=0;s<6;s++){
-			const sx = Math.floor(Math.random()*(canvas.width-sampleW));
-			const sy = Math.floor(Math.random()*(canvas.height-sampleH));
-			const img = ctx.getImageData(sx,sy,sampleW,sampleH).data;
-			let sumDiff=0;
-			for(let i=0;i<sampleW*sampleH;i++){
-				const g = (img[i*4]+img[i*4+1]+img[i*4+2])/3/255;
-				sumDiff += Math.abs(g - refGray[i]);
-			}
-			const avg = sumDiff/(sampleW*sampleH);
-			if(avg < threshold){ detected=true; break; }
-		}
-		if(detected){
-			playAcceptSound('ek');
-			qs('#scan-feedback').innerText = 'EK accepted';
-			setTimeout(()=>{ stopScanner(); show('view-menu'); show('view-menu'); show('view-menu'); show('view-menu'); show('view-menu'); show('view-menu'); show('view-menu'); show('view-menu'); show('view-menu'); show('view-menu'); }, 800);
-			// redirect to menu
-			setTimeout(()=>show('view-menu'),900);
-			return;
-		}
-		requestAnimationFrame(frame);
-	}
-	frame();
-}
-
-// Ticket scanning uses BarcodeDetector if available; otherwise simple image-based match against ticket codes via on-screen QR
+// Scan logic: use BarcodeDetector; when match found, handle scanned flag and overlay
 async function scanForTicket(){
 	qs('#scan-feedback').innerText = 'Looking for ticket codes...';
-	const tickets = DB.tickets;
 	const detector = (window.BarcodeDetector ? new BarcodeDetector({formats:['qr_code','ean_13','code_128']}) : null);
 	let found=false;
 	async function frame(){
@@ -598,9 +560,19 @@ async function scanForTicket(){
 				if(barcodes && barcodes.length){
 					for(const b of barcodes){
 						const raw = b.rawValue;
-						if(tickets.find(t=>t.code===raw)){
-							playAcceptSound('ticket');
-							qs('#scan-feedback').innerText='Ticket Accepted ✓';
+						const tickets = DB.tickets;
+						const match = tickets.find(t=>t.code === raw);
+						if(match){
+							if(match.scanned){
+								playAcceptSound('fail');
+								showOverlay('fail','✖ Ticket already scanned');
+							} else {
+								// mark scanned, save DB
+								match.scanned = true;
+								DB.tickets = DB.tickets.map(t=>t.id===match.id?match:t);
+								playAcceptSound('ticket');
+								showOverlay('ok','✓ Ticket accepted — Welcome '+(match.name||'Guest'));
+							}
 							found=true;
 							setTimeout(()=> stopScanner(),1000);
 							return;
@@ -609,32 +581,29 @@ async function scanForTicket(){
 				}
 			}catch(e){}
 		} else {
-			// fallback: draw center crop and try to read visually by asking user to show the QR large; attempt simple OCR by sampling brightness patterns is unreliable — prompt user to display QR clearly
-			qs('#scan-feedback').innerText = 'No BarcodeDetector: please point QR code clearly at camera';
-			// crude: capture canvas to dataURL and check if any saved ticket code appears as substring (this only works if code is visually rendered as text). Many QR images are not text; this is fallback only.
-			const data = canvas.toDataURL();
-			for(const t of tickets){
-				if(data.includes(t.code)){ playAcceptSound('ticket'); qs('#scan-feedback').innerText='Ticket Accepted ✓'; found=true; setTimeout(()=> stopScanner(),1000); return; }
-			}
+			qs('#scan-feedback').innerText = 'No BarcodeDetector: please point barcode clearly at camera';
+			// fallback: no reliable decode; skip
 		}
 		if(!found) requestAnimationFrame(frame);
 	}
 	frame();
 }
 
-// Generate small accept sounds programmatically
+// adjust playAcceptSound to handle 'fail' tone
 function playAcceptSound(type){
-	const ctx = new (window.AudioContext || window.webkitAudioContext)();
-	const o = ctx.createOscillator();
-	const g = ctx.createGain();
+	const ctxAudio = new (window.AudioContext || window.webkitAudioContext)();
+	const o = ctxAudio.createOscillator();
+	const g = ctxAudio.createGain();
 	o.type='sine';
-	o.connect(g); g.connect(ctx.destination);
-	if(type==='ek'){ o.frequency.value=880; } else { o.frequency.value=660; }
+	o.connect(g); g.connect(ctxAudio.destination);
+	if(type==='ek'){ o.frequency.value=880; }
+	else if(type==='fail'){ o.frequency.value=150; }
+	else { o.frequency.value=660; }
 	o.start();
-	g.gain.setValueAtTime(0.0001, ctx.currentTime);
-	g.gain.exponentialRampToValueAtTime(0.2, ctx.currentTime+0.02);
-	g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime+0.5);
-	o.stop(ctx.currentTime+0.6);
+	g.gain.setValueAtTime(0.0001, ctxAudio.currentTime);
+	g.gain.exponentialRampToValueAtTime(0.2, ctxAudio.currentTime+0.02);
+	g.gain.exponentialRampToValueAtTime(0.0001, ctxAudio.currentTime+0.5);
+	o.stop(ctxAudio.currentTime+0.6);
 }
 
 // on load
