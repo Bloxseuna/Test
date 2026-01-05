@@ -1,0 +1,645 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width,initial-scale=1" />
+	<title>Dark Modern Event POS</title>
+	<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+	<div id="app" class="container">
+		<!-- Home -->
+		<div id="view-home" class="view">
+			<h1>Event POS</h1>
+			<div class="controls">
+				<button id="btn-enter-owner" class="btn">Enter Owner ID</button>
+				<button id="btn-scan-keycard" class="btn primary">Scan Keycard</button>
+				<button id="btn-login-signup" class="btn">Login / Signup</button>
+			</div>
+		</div>
+
+		<!-- Auth Modal (signup/login) -->
+		<div id="modal-auth" class="modal hidden">
+			<div class="card auth-card">
+				<button class="back small" data-back>×</button>
+				<h2 id="auth-title">Signup</h2>
+				<div id="signup-box">
+					<label>Email</label>
+					<input id="auth-email" type="email" />
+					<label>Create password</label>
+					<input id="auth-pass" type="password" />
+					<div class="row">
+						<button id="auth-signup" class="btn primary">Signup</button>
+						<button id="auth-to-login" class="btn">Or Login</button>
+					</div>
+				</div>
+				<div id="login-box" class="hidden">
+					<label>Email</label>
+					<input id="login-email" type="email" />
+					<label>Password</label>
+					<input id="login-pass" type="password" />
+					<div class="row">
+						<button id="auth-login" class="btn primary">Login</button>
+						<button id="auth-to-signup" class="btn">Or Signup</button>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<!-- ID Entry / Display -->
+		<div id="view-id-entry" class="view hidden">
+			<button class="back" data-back>Back</button>
+			<h2>Enter ID</h2>
+			<input id="owner-id-input" placeholder="Enter ID" />
+			<div class="row">
+				<button id="submit-owner-id" class="btn primary">Submit ID</button>
+			</div>
+			<p id="id-msg" class="muted"></p>
+		</div>
+
+		<!-- Main menu 2x2 -->
+		<div id="view-menu" class="view hidden">
+			<button class="back" data-back>Back</button>
+			<h2>Main Menu</h2>
+			<div class="grid-2">
+				<button id="btn-new-event" class="card big">New Event</button>
+				<button id="btn-ticket-scanner" class="card big">Ticket Scanner</button>
+				<button id="btn-ticket-maker" class="card big">Ticket Maker</button>
+				<button id="btn-admin-panel" class="card big">Admin Panel</button>
+			</div>
+		</div>
+
+		<!-- New Event -->
+		<div id="view-new-event" class="view hidden">
+			<button class="back" data-back>Back</button>
+			<h2>New Event</h2>
+			<label>Enter your event name</label>
+			<input id="ev-name" />
+			<label>Enter the Date of your Event</label>
+			<input id="ev-date" type="date" />
+			<label>Enter the Theme of your Event</label>
+			<input id="ev-theme" />
+			<label>Enter opening and closing time</label>
+			<div class="row">
+				<input id="ev-open" type="time" />
+				<input id="ev-close" type="time" />
+			</div>
+			<label><input id="ev-has-admins" type="checkbox" /> Will you have Event Admins</label>
+			<div class="row">
+				<button id="create-event" class="btn primary">Create Event</button>
+			</div>
+		</div>
+
+		<!-- Dashboard -->
+		<div id="view-dashboard" class="view hidden">
+			<button class="back" data-back>Back</button>
+			<h2>Dashboard</h2>
+			<div id="events-list" class="list"></div>
+		</div>
+
+		<!-- Event Detail -->
+		<div id="view-event" class="view hidden">
+			<button class="back" data-back>Back</button>
+			<h2 id="event-title">Event</h2>
+			<div class="row">
+				<button id="btn-change-info" class="btn">Change info</button>
+				<button id="btn-event-make-ticket" class="btn primary">Make Tickets for Event</button>
+				<button id="btn-event-scan" class="btn">Ticket Scanner</button>
+			</div>
+			<div id="event-info" class="muted"></div>
+		</div>
+
+		<!-- Ticket Maker -->
+		<div id="view-ticket-maker" class="view hidden">
+			<button class="back" data-back>Back</button>
+			<h2>Ticket Maker</h2>
+			<div id="ticket-preview" class="ticket">
+				<div id="ticket-content">
+					<h3 id="tk-name">Event Name</h3>
+					<p id="tk-theme"></p>
+					<p id="tk-datetime"></p>
+					<img id="tk-qr" alt="QR" />
+				</div>
+			</div>
+			<div class="row">
+				<button id="download-ticket" class="btn primary">Download PNG (Barcode)</button>
+			</div>
+		</div>
+
+		<!-- Scanner view -->
+		<div id="view-scanner" class="view hidden">
+			<button class="back" data-back>Back</button>
+			<h2 id="scanner-title">Scanner</h2>
+			<video id="video" autoplay muted playsinline></video>
+			<canvas id="scan-canvas" class="hidden"></canvas>
+			<div class="row">
+				<button id="exit-scanner" class="btn">Exit Scanner</button>
+			</div>
+			<div id="scan-feedback" class="muted"></div>
+		</div>
+
+		<!-- Admin panel -->
+		<div id="view-admin" class="view hidden">
+			<button class="back" data-back>Back</button>
+			<h2>Admin Panel (Owner)</h2>
+			<p class="muted">Owner-only controls here.</p>
+		</div>
+	</div>
+
+<script>
+/* Minimal SPA + localStorage "databases" */
+
+// Simple helpers
+const qs = sel => document.querySelector(sel);
+const qsa = sel => document.querySelectorAll(sel);
+const OWNER_MASTER = "24839";
+
+// Simple local "databases" in localStorage
+const DB = {
+	get users(){ return JSON.parse(localStorage.getItem('users') || '{}'); },
+	set users(v){ localStorage.setItem('users', JSON.stringify(v)); },
+	get events(){ return JSON.parse(localStorage.getItem('events') || '[]'); },
+	set events(v){ localStorage.setItem('events', JSON.stringify(v)); },
+	get tickets(){ return JSON.parse(localStorage.getItem('tickets') || '[]'); },
+	set tickets(v){ localStorage.setItem('tickets', JSON.stringify(v)); },
+	get sessions(){ return JSON.parse(localStorage.getItem('sessions') || '{}'); },
+	set sessions(v){ localStorage.setItem('sessions', JSON.stringify(v)); }
+};
+
+// initial
+if(!localStorage.getItem('ownerIDs')) localStorage.setItem('ownerIDs', JSON.stringify([OWNER_MASTER]));
+
+// views
+const views = {};
+[...document.querySelectorAll('.view')].forEach(v => views[v.id]=v);
+function show(id){
+	Object.values(views).forEach(v=>v.classList.add('hidden'));
+	views[id].classList.remove('hidden');
+}
+
+// back buttons
+qsa('[data-back]').forEach(b=>b.addEventListener('click', ()=>show('view-home')));
+
+// Home buttons
+qs('#btn-enter-owner').addEventListener('click', ()=>show('view-id-entry'));
+qs('#btn-scan-keycard').addEventListener('click', ()=> startScanner('keycard'));
+qs('#btn-login-signup').addEventListener('click', ()=> {
+	showModal('auth');
+});
+
+// Auth modal logic
+function showModal(which){
+	document.getElementById('modal-auth').classList.remove('hidden');
+	if(which==='auth'){ document.getElementById('signup-box').classList.remove('hidden'); document.getElementById('login-box').classList.add('hidden'); document.getElementById('auth-title').innerText='Signup'; }
+}
+qsa('#modal-auth [data-back]').forEach(b=>b.addEventListener('click', ()=>document.getElementById('modal-auth').classList.add('hidden')));
+qs('#auth-to-login').addEventListener('click', ()=>{ document.getElementById('signup-box').classList.add('hidden'); document.getElementById('login-box').classList.remove('hidden'); document.getElementById('auth-title').innerText='Login'; });
+qs('#auth-to-signup').addEventListener('click', ()=>{ document.getElementById('signup-box').classList.remove('hidden'); document.getElementById('login-box').classList.add('hidden'); document.getElementById('auth-title').innerText='Signup'; });
+
+// Signup
+qs('#auth-signup').addEventListener('click', ()=>{
+	const email = qs('#auth-email').value.trim();
+	const pass = qs('#auth-pass').value;
+	if(!email || !pass){ alert('Enter email and password'); return; }
+	const users = DB.users;
+	if(users[email]){ alert('Email exists'); return; }
+	const id = 'ID-'+Math.random().toString(36).slice(2,10);
+	users[email] = { email, pass, id };
+	DB.users = users;
+	DB.sessions = { current: { email, id } };
+	document.getElementById('modal-auth').classList.add('hidden');
+	alert('Signup success. Copy this ID and enter it into the ID Field:\\n'+id);
+});
+
+// Login
+qs('#auth-login').addEventListener('click', ()=>{
+	const email = qs('#login-email').value.trim();
+	const pass = qs('#login-pass').value;
+	const users = DB.users;
+	if(!users[email] || users[email].pass !== pass){ alert('Invalid credentials'); return; }
+	DB.sessions = { current: { email, id: users[email].id } };
+	document.getElementById('modal-auth').classList.add('hidden');
+	show('view-menu');
+});
+
+// ID submission
+qs('#submit-owner-id').addEventListener('click', ()=>{
+	const val = qs('#owner-id-input').value.trim();
+	const ownerIDs = JSON.parse(localStorage.getItem('ownerIDs') || '[]');
+	// match session IDs too
+	const session = DB.sessions.current;
+	if(ownerIDs.includes(val) || (session && session.id === val)){
+		show('view-menu');
+	} else { qs('#id-msg').innerText = 'ID not recognized'; }
+});
+
+// Menu buttons
+qs('#btn-new-event').addEventListener('click', ()=> show('view-new-event'));
+qs('#btn-ticket-scanner').addEventListener('click', ()=> { startScanner('ticket'); });
+qs('#btn-ticket-maker').addEventListener('click', ()=> {
+	// open ticket maker for selected event — if only one event, pick last created, else prompt
+	const evs = DB.events;
+	if(evs.length===0){ alert('No events. Create one.'); return; }
+	// pick last
+	const ev = evs[evs.length-1];
+	openTicketMaker(ev);
+	show('view-ticket-maker');
+});
+qs('#btn-admin-panel').addEventListener('click', ()=> {
+	const session = DB.sessions.current;
+	if(session && session.id === OWNER_MASTER){ show('view-admin'); } else alert('Owner only');
+});
+
+// New event create
+qs('#create-event').addEventListener('click', ()=>{
+	const name = qs('#ev-name').value.trim();
+	const date = qs('#ev-date').value;
+	const theme = qs('#ev-theme').value.trim();
+	const open = qs('#ev-open').value;
+	const close = qs('#ev-close').value;
+	const admins = qs('#ev-has-admins').checked;
+	if(!name || !date){ alert('Please fill name and date'); return; }
+	const ev = { id: 'EV-'+Date.now(), name, date, theme, open, close, admins };
+	const evs = DB.events; evs.push(ev); DB.events = evs;
+	show('view-dashboard'); renderEvents();
+});
+
+// Dashboard render
+function renderEvents(){
+	const container = qs('#events-list');
+	container.innerHTML='';
+	DB.events.forEach(ev=>{
+		const btn = document.createElement('button');
+		btn.className='card';
+		btn.innerHTML = `<strong>${ev.name}</strong><div class="muted">${ev.date} ${ev.open || ''}</div><div class="muted">${ev.theme}</div>`;
+		btn.addEventListener('click', ()=>{
+			openEvent(ev.id);
+		});
+		container.appendChild(btn);
+	});
+}
+
+// Open event detail
+function openEvent(id){
+	const ev = DB.events.find(x=>x.id===id);
+	if(!ev) return;
+	qs('#event-title').innerText = ev.name;
+	qs('#event-info').innerText = `Date: ${ev.date} ${ev.open || ''} - ${ev.close || ''}\nTheme: ${ev.theme}`;
+	show('view-event');
+	qs('#btn-event-make-ticket').onclick = ()=>{ openTicketMaker(ev); show('view-ticket-maker'); };
+	qs('#btn-event-scan').onclick = ()=> startScanner('ticket');
+	qs('#btn-change-info').onclick = ()=> {
+		// change info: simple inline edits
+		const n = prompt('Event name', ev.name) || ev.name;
+		ev.name = n;
+		DB.events = DB.events.map(x=>x.id===ev.id?ev:x);
+		alert('Updated'); openEvent(ev.id);
+	};
+}
+
+// Ticket maker
+let lastTicketQR = null;
+let lastTicketImage = null;
+
+function code128Patterns(){
+	// Code128 module patterns: each entry is array of 6 widths (bar/space alternating), values from standard table
+	return [
+		[2,1,2,2,2,2],[2,2,2,1,2,2],[2,2,2,2,2,1],[1,2,1,2,2,3],[1,2,1,3,2,2],
+		[1,3,1,2,2,2],[1,2,2,2,1,3],[1,2,2,3,1,2],[1,3,2,2,1,2],[2,2,1,2,1,3],
+		[2,2,1,3,1,2],[2,3,1,2,1,2],[1,1,2,2,3,2],[1,2,2,1,3,2],[1,2,2,2,3,1],
+		[1,1,3,2,2,2],[1,2,3,1,2,2],[1,2,3,2,2,1],[2,2,3,2,1,1],[2,2,1,1,3,2],
+		[2,2,1,2,3,1],[2,1,3,2,1,2],[2,2,3,1,1,2],[3,1,2,1,3,1],[3,1,1,2,2,2],
+		[3,2,1,1,2,2],[3,2,1,2,2,1],[3,1,2,2,1,2],[3,2,2,1,1,2],[3,2,2,2,1,1],
+		[2,1,2,1,2,3],[2,1,2,3,2,1],[2,3,2,1,2,1],[1,1,1,3,2,3],[1,3,1,1,2,3],
+		[1,3,1,3,2,1],[1,1,2,3,1,3],[1,3,2,1,1,3],[1,3,2,3,1,1],[2,1,1,3,1,3],
+		[2,3,1,1,1,3],[2,3,1,3,1,1],[1,1,2,1,3,3],[1,1,2,3,3,1],[1,3,2,1,3,1],
+		[1,1,3,1,2,3],[1,1,3,3,2,1],[1,3,3,1,2,1],[3,1,3,1,2,1],[2,1,1,3,3,1],
+		[2,3,1,1,3,1],[2,1,3,1,1,3],[2,1,3,3,1,1],[2,1,3,1,3,1],[3,1,1,1,2,3],
+		[3,1,1,3,2,1],[3,3,1,1,2,1],[3,1,2,1,1,3],[3,1,2,3,1,1],[3,3,2,1,1,1],
+		[3,1,4,1,1,1],[2,2,1,4,1,1],[4,3,1,1,1,1],[1,1,1,2,2,4],[1,1,1,4,2,2],
+		[1,2,1,1,2,4],[1,2,1,4,2,1],[1,4,1,1,2,2],[1,4,1,2,2,1],[1,1,2,2,1,4],
+		[1,1,2,4,1,2],[1,2,2,1,1,4],[1,2,2,4,1,1],[1,4,2,1,1,2],[1,4,2,2,1,1],
+		[2,4,1,2,1,1],[2,2,1,1,1,4],[4,1,3,1,1,1],[2,4,1,1,1,2],[1,3,4,1,1,1],
+		[1,1,1,2,4,2],[1,2,1,1,4,2],[1,2,1,2,4,1],[1,1,4,2,1,2],[1,2,4,1,1,2],
+		[1,2,4,2,1,1],[4,1,1,2,1,2],[4,2,1,1,1,2],[4,2,1,2,1,1],[2,1,2,1,4,1],
+		[2,1,4,1,2,1],[4,1,2,1,2,1],[1,1,1,1,4,3],[1,1,1,3,4,1],[1,3,1,1,4,1],
+		[1,1,4,1,1,3],[1,1,4,3,1,1],[4,1,1,1,1,3],[4,1,1,3,1,1],[1,1,3,1,4,1],
+		[1,1,4,1,3,1],[3,1,1,1,4,1],[4,1,1,1,3,1],[2,1,1,4,1,2],[2,1,1,2,1,4],
+		[2,1,1,2,3,2],[2,3,3,1,1,1,] // note: last entry patterns may vary; index 106 is STOP pattern handled separately
+	];
+}
+
+// Basic Code128-B encoder + renderer
+function encodeCode128B(str){
+	// only supports characters 32..127
+	const patterns = code128Patterns();
+	const START_B = 104;
+	const STOP_PATTERN = [2,3,3,1,1,1,2]; // stop has 7 modules (last 2 for termination bar)
+	const codes = [START_B];
+	for(let i=0;i<str.length;i++){
+		const ch = str.charCodeAt(i);
+		if(ch < 32 || ch > 127) throw new Error('Unsupported char for Code128-B');
+		codes.push(ch - 32);
+	}
+	// checksum
+	let checksum = START_B;
+	for(let i=0;i<codes.length-1;i++){
+		checksum += codes[i+1] * (i+1);
+	}
+	checksum = checksum % 103;
+	codes.push(checksum);
+	codes.push(106); // STOP code index (106)
+	// convert to module widths
+	let modules = [];
+	for(let i=0;i<codes.length;i++){
+		const code = codes[i];
+		// code 106 is STOP: use STOP_PATTERN
+		if(code === 106){
+			modules = modules.concat(STOP_PATTERN);
+		} else {
+			const p = patterns[code];
+			if(!p) throw new Error('Pattern missing for code '+code);
+			modules = modules.concat(p);
+		}
+	}
+	return modules;
+}
+
+async function openTicketMaker(ev){
+	qs('#tk-name').innerText = ev.name;
+	qs('#tk-theme').innerText = 'Theme: '+(ev.theme||'-');
+	qs('#tk-datetime').innerText = ev.date + ' ' + (ev.open||'');
+
+	// create ticket code
+	const code = 'TICKET-'+Math.random().toString(36).slice(2,10);
+	lastTicketQR = code;
+
+	// generate QR image for visual as well (optional)
+	function loadImg(src){
+		return new Promise((res, rej)=>{
+			const i = new Image();
+			i.crossOrigin = "anonymous";
+			i.onload = ()=>res(i);
+			i.onerror = rej;
+			i.src = src;
+		});
+	}
+	const qrUrl = 'https://chart.googleapis.com/chart?cht=qr&chs=240x240&chl='+encodeURIComponent(code);
+	let qrImg = null;
+	try{ qrImg = await loadImg(qrUrl); }catch(e){ qrImg = null; }
+
+	// compose canvas (larger canvas to hold clear barcode)
+	const W = 1000, H = 420;
+	const c = document.createElement('canvas'); c.width = W; c.height = H;
+	const ctx2 = c.getContext('2d');
+
+	// background
+	ctx2.fillStyle = '#071019';
+	ctx2.fillRect(0,0,W,H);
+	// header stripe
+	const grad = ctx2.createLinearGradient(0,0,W,0);
+	grad.addColorStop(0,'rgba(87,183,255,0.06)');
+	grad.addColorStop(1,'rgba(123,97,255,0.04)');
+	ctx2.fillStyle = grad;
+	ctx2.fillRect(0,0,W,88);
+
+	// Event name
+	ctx2.fillStyle = '#eaf6ff';
+	ctx2.font = '32px sans-serif';
+	ctx2.fillText(ev.name, 28, 64);
+
+	// theme / date / time
+	ctx2.fillStyle = '#cfeeff';
+	ctx2.font = '18px sans-serif';
+	ctx2.fillText('Theme: ' + (ev.theme || '-'), 28, 120);
+	ctx2.fillText('Date: ' + ev.date, 28, 150);
+	ctx2.fillText('Time: ' + (ev.open || '-') + ' — ' + (ev.close || '-'), 28, 180);
+
+	// draw QR if available (small)
+	if(qrImg){
+		const qrSize = 200;
+		ctx2.fillStyle = '#ffffff';
+		ctx2.fillRect(W - qrSize - 28, 28, qrSize, qrSize);
+		ctx2.drawImage(qrImg, W - qrSize - 28 + 8, 28 + 8, qrSize - 16, qrSize - 16);
+	}
+
+	// draw real Code128 barcode (bigger, center-right)
+	const barcodeX = 28;
+	const barcodeY = 210;
+	const barcodeH = 140;
+	try{
+		const modules = encodeCode128B(code);
+		// determine module pixel width so barcode fits nicely
+		const quietZone = 20; // px
+		const totalModules = modules.reduce((s,n)=>s+n,0);
+		const availableWidth = W - 56; // padding both sides
+		const modulePx = Math.floor((availableWidth - quietZone*2) / totalModules);
+		const mpx = Math.max(1, modulePx); // at least 1 px
+		let x = barcodeX + quietZone;
+		// white background for barcode area
+		ctx2.fillStyle = '#fff';
+		const bw = totalModules * mpx + quietZone*2;
+		ctx2.fillRect(barcodeX, barcodeY - 8, bw, barcodeH + 16);
+		// draw bars: pattern alternates bar/space starting with bar
+		let drawBar = true;
+		for(let w of modules){
+			const wPx = w * mpx;
+			if(drawBar){
+				ctx2.fillStyle = '#000';
+				ctx2.fillRect(x, barcodeY, wPx, barcodeH);
+			}
+			x += wPx;
+			drawBar = !drawBar;
+		}
+		// human-readable code text below barcode
+		ctx2.fillStyle = '#00222a';
+		ctx2.font = '18px monospace';
+		ctx2.fillText(code, barcodeX + 10, barcodeY + barcodeH + 30);
+	} catch(e){
+		// fallback visual if encoding fails
+		const barX = 28, barY = 220, barH = 120;
+		const seed = Array.from(code).map(ch=>ch.charCodeAt(0));
+		for(let i=0;i<seed.length;i++){
+			const w = 6 + (seed[i] % 10);
+			const x = barX + i * 12;
+			const shade = 30 + (seed[i] % 120);
+			ctx2.fillStyle = `rgb(${shade},${shade},${shade})`;
+			ctx2.fillRect(x, barY, w, barH);
+		}
+		ctx2.fillStyle = '#bfe8ff';
+		ctx2.font = '14px monospace';
+		ctx2.fillText(code, barX, barY + barH + 22);
+	}
+
+	// finalize data URL
+	const dataUrl = c.toDataURL('image/png');
+	lastTicketImage = dataUrl;
+
+	// show generated image in ticket preview
+	qs('#tk-qr').src = dataUrl;
+
+	// save ticket record (store image data)
+	const t = { id: 'TK-'+Date.now(), code, eventId: ev.id, created: Date.now(), img: dataUrl };
+	const tickets = DB.tickets; tickets.push(t); DB.tickets = tickets;
+}
+
+// Download ticket view as PNG
+qs('#download-ticket').addEventListener('click', async ()=>{
+	// If we have generated image, download it directly
+	const data = lastTicketImage || qs('#tk-qr').src;
+	if(!data){ alert('No ticket to download'); return; }
+	const a = document.createElement('a');
+	a.href = data;
+	a.download = 'Barcode.png';
+	document.body.appendChild(a);
+	a.click();
+	a.remove();
+});
+
+// Scanner logic
+let streamRef = null;
+let scanningMode = null;
+const video = qs('#video');
+const canvas = qs('#scan-canvas');
+const ctx = canvas.getContext('2d');
+
+qs('#btn-scan-keycard').addEventListener('click', ()=> startScanner('keycard'));
+
+qs('#exit-scanner').addEventListener('click', ()=> stopScanner());
+
+async function startScanner(mode){
+	scanningMode = mode; show('view-scanner');
+	qs('#scanner-title').innerText = mode==='keycard' ? 'Scan Keycard' : 'Ticket Scanner';
+	try{
+		const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+		streamRef = stream;
+		video.srcObject = stream;
+		await video.play();
+		canvas.width = video.videoWidth || 640;
+		canvas.height = video.videoHeight || 480;
+		qs('#scan-feedback').innerText = 'Scanning...';
+		if(mode==='keycard') scanForEK();
+		else scanForTicket();
+	}catch(e){ alert('Camera error: '+e.message); show('view-menu'); }
+}
+function stopScanner(){
+	if(streamRef){ streamRef.getTracks().forEach(t=>t.stop()); streamRef = null; }
+	video.pause(); video.srcObject = null;
+	show('view-menu');
+}
+
+// EK reference image embedded (small sample). In practice replace with your EK.png.
+const EK_DATA_URL = (()=>{
+	// 64x64 simple marker (generated) as data URL
+	const c = document.createElement('canvas'); c.width=64; c.height=64;
+	const cx = c.getContext('2d');
+	cx.fillStyle='#222'; cx.fillRect(0,0,64,64);
+	cx.fillStyle='#0af'; cx.fillRect(8,8,48,48);
+	cx.fillStyle='#fff'; cx.fillRect(20,20,24,24);
+	return c.toDataURL();
+})();
+
+let ekImage = new Image();
+ekImage.src = EK_DATA_URL;
+
+// Simple template-match: downsample and compute correlation on small grid
+async function scanForEK(){
+	const threshold = 0.15; // lower is stricter
+	const sampleW = 32, sampleH = 32;
+	// prepare ref
+	const refC = document.createElement('canvas'); refC.width=sampleW; refC.height=sampleH;
+	const rctx = refC.getContext('2d'); rctx.drawImage(ekImage,0,0,sampleW,sampleH);
+	const refData = rctx.getImageData(0,0,sampleW,sampleH).data;
+	const refGray = new Float32Array(sampleW*sampleH);
+	for(let i=0;i<sampleW*sampleH;i++) refGray[i]=(refData[i*4]+refData[i*4+1]+refData[i*4+2])/3/255;
+	let detected=false;
+	async function frame(){
+		if(!streamRef) return;
+		ctx.drawImage(video,0,0,canvas.width,canvas.height);
+		// sample a few random patches to speed up
+		for(let s=0;s<6;s++){
+			const sx = Math.floor(Math.random()*(canvas.width-sampleW));
+			const sy = Math.floor(Math.random()*(canvas.height-sampleH));
+			const img = ctx.getImageData(sx,sy,sampleW,sampleH).data;
+			let sumDiff=0;
+			for(let i=0;i<sampleW*sampleH;i++){
+				const g = (img[i*4]+img[i*4+1]+img[i*4+2])/3/255;
+				sumDiff += Math.abs(g - refGray[i]);
+			}
+			const avg = sumDiff/(sampleW*sampleH);
+			if(avg < threshold){ detected=true; break; }
+		}
+		if(detected){
+			playAcceptSound('ek');
+			qs('#scan-feedback').innerText = 'EK accepted';
+			setTimeout(()=>{ stopScanner(); show('view-menu'); show('view-menu'); show('view-menu'); show('view-menu'); show('view-menu'); show('view-menu'); show('view-menu'); show('view-menu'); show('view-menu'); show('view-menu'); }, 800);
+			// redirect to menu
+			setTimeout(()=>show('view-menu'),900);
+			return;
+		}
+		requestAnimationFrame(frame);
+	}
+	frame();
+}
+
+// Ticket scanning uses BarcodeDetector if available; otherwise simple image-based match against ticket codes via on-screen QR
+async function scanForTicket(){
+	qs('#scan-feedback').innerText = 'Looking for ticket codes...';
+	const tickets = DB.tickets;
+	const detector = (window.BarcodeDetector ? new BarcodeDetector({formats:['qr_code','ean_13','code_128']}) : null);
+	let found=false;
+	async function frame(){
+		if(!streamRef) return;
+		ctx.drawImage(video,0,0,canvas.width,canvas.height);
+		if(detector){
+			try{
+				const bitmap = await createImageBitmap(canvas);
+				const barcodes = await detector.detect(bitmap).catch(()=>[]);
+				if(barcodes && barcodes.length){
+					for(const b of barcodes){
+						const raw = b.rawValue;
+						if(tickets.find(t=>t.code===raw)){
+							playAcceptSound('ticket');
+							qs('#scan-feedback').innerText='Ticket Accepted ✓';
+							found=true;
+							setTimeout(()=> stopScanner(),1000);
+							return;
+						}
+					}
+				}
+			}catch(e){}
+		} else {
+			// fallback: draw center crop and try to read visually by asking user to show the QR large; attempt simple OCR by sampling brightness patterns is unreliable — prompt user to display QR clearly
+			qs('#scan-feedback').innerText = 'No BarcodeDetector: please point QR code clearly at camera';
+			// crude: capture canvas to dataURL and check if any saved ticket code appears as substring (this only works if code is visually rendered as text). Many QR images are not text; this is fallback only.
+			const data = canvas.toDataURL();
+			for(const t of tickets){
+				if(data.includes(t.code)){ playAcceptSound('ticket'); qs('#scan-feedback').innerText='Ticket Accepted ✓'; found=true; setTimeout(()=> stopScanner(),1000); return; }
+			}
+		}
+		if(!found) requestAnimationFrame(frame);
+	}
+	frame();
+}
+
+// Generate small accept sounds programmatically
+function playAcceptSound(type){
+	const ctx = new (window.AudioContext || window.webkitAudioContext)();
+	const o = ctx.createOscillator();
+	const g = ctx.createGain();
+	o.type='sine';
+	o.connect(g); g.connect(ctx.destination);
+	if(type==='ek'){ o.frequency.value=880; } else { o.frequency.value=660; }
+	o.start();
+	g.gain.setValueAtTime(0.0001, ctx.currentTime);
+	g.gain.exponentialRampToValueAtTime(0.2, ctx.currentTime+0.02);
+	g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime+0.5);
+	o.stop(ctx.currentTime+0.6);
+}
+
+// on load
+show('view-home');
+
+</script>
+</body>
+</html>
